@@ -16,11 +16,16 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from pydantic import BaseModel
 from typing import Dict
+import logging
+
+# Configure logging for Vercel
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Add session middleware
-app.add_middleware(SessionMiddleware, secret_key=os.urandom(32).hex(), session_cookie="session_id", max_age=None)
+# Add session middleware with a fixed secret key
+app.add_middleware(SessionMiddleware, secret_key="fixed-secret-key-1234567890", session_cookie="session_id", max_age=None)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -28,7 +33,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Configuration
 μ = 1_000_000
 b58 = re.compile(r"^oct[1-9A-HJ-NP-Za-km-z]{40,48}$")
-# In-memory session storage (Vercel is stateless, so this is per-instance)
 sessions: Dict[str, Dict] = {}
 executor = ThreadPoolExecutor(max_workers=1)
 
@@ -44,14 +48,18 @@ class LoadWalletRequest(BaseModel):
 
 def base58_encode(data):
     """Encode bytes to base58 (excluding 0, O, I, l)."""
-    alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-    x = int.from_bytes(data, 'big')
-    result = ''
-    while x > 0:
-        x, r = divmod(x, 58)
-        result = alphabet[r] + result
-    result = result.rjust(44, alphabet[0])
-    return result
+    try:
+        alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+        x = int.from_bytes(data, 'big')
+        result = ''
+        while x > 0:
+            x, r = divmod(x, 58)
+            result = alphabet[r] + result
+        result = result.rjust(44, alphabet[0])
+        return result
+    except Exception as e:
+        logger.error(f"Base58 encoding error: {str(e)}")
+        raise ValueError(f"Base58 encoding failed: {str(e)}")
 
 def generate_wallet():
     """Generate a new wallet using nacl.signing."""
@@ -63,7 +71,7 @@ def generate_wallet():
         pubkey_hash = hashlib.sha256(verify_key.encode()).digest()
         address = "oct" + base58_encode(pubkey_hash)[:45]
         if not b58.match(address):
-            print(f"Generated address {address} does not match expected format")
+            logger.warning(f"Generated address {address} does not match expected format")
         return {
             "private_key": private_key,
             "public_key": public_key,
@@ -71,6 +79,7 @@ def generate_wallet():
             "rpc": "https://octra.network"
         }
     except Exception as e:
+        logger.error(f"Wallet generation error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Wallet generation failed: {str(e)}")
 
 def load_wallet(request: Request, base64_key: str):
@@ -84,7 +93,7 @@ def load_wallet(request: Request, base64_key: str):
         pubkey_hash = hashlib.sha256(sk.verify_key.encode()).digest()
         addr = "oct" + base58_encode(pubkey_hash)[:45]
         if not b58.match(addr):
-            print(f"Loaded address {addr} does not match expected format")
+            logger.warning(f"Loaded address {addr} does not match expected format")
         session_id = request.session.get("session_id")
         if not session_id:
             session_id = os.urandom(16).hex()
@@ -103,20 +112,24 @@ def load_wallet(request: Request, base64_key: str):
         }
         return True
     except Exception as e:
-        print(f"Wallet load error: {str(e)}")
+        logger.error(f"Wallet load error: {str(e)}")
         return False
 
 async def get_session(request: Request):
     """Get session data for the current user."""
-    session_id = request.session.get("session_id")
-    if not session_id or session_id not in sessions:
-        raise HTTPException(status_code=400, detail="No wallet loaded. Generate or load a wallet first.")
-    return sessions[session_id]
+    try:
+        session_id = request.session.get("session_id")
+        if not session_id or session_id not in sessions:
+            raise HTTPException(status_code=400, detail="No wallet loaded. Generate or load a wallet first.")
+        return sessions[session_id]
+    except Exception as e:
+        logger.error(f"Session retrieval error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Session error: {str(e)}")
 
 async def req(rpc: str, m: str, p: str, d=None, t=10):
     """Make HTTP request with a new aiohttp.ClientSession per call."""
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=t)) as session:
-        try:
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=t)) as session:
             url = f"{rpc}{p}"
             async with getattr(session, m.lower())(url, json=d if m == 'POST' else None) as resp:
                 text = await resp.text()
@@ -125,122 +138,142 @@ async def req(rpc: str, m: str, p: str, d=None, t=10):
                 except:
                     j = None
                 return resp.status, text, j
-        except asyncio.TimeoutError:
-            return 0, "timeout", None
-        except Exception as e:
-            return 0, str(e), None
+    except asyncio.TimeoutError:
+        logger.error("Request timeout")
+        return 0, "timeout", None
+    except Exception as e:
+        logger.error(f"Request error: {str(e)}")
+        return 0, str(e), None
 
 async def st(session_data: Dict):
     """Get balance and nonce for the session's wallet."""
-    now = time.time()
-    if session_data["cb"] is not None and (now - session_data["lu"]) < 30:
-        return session_data["cn"], session_data["cb"]
-    results = await asyncio.gather(
-        req(session_data["rpc"], 'GET', f'/balance/{session_data["addr"]}'),
-        req(session_data["rpc"], 'GET', '/staging', 5),
-        return_exceptions=True
-    )
-    s, t, j = results[0] if not isinstance(results[0], Exception) else (0, str(results[0]), None)
-    s2, _, j2 = results[1] if not isinstance(results[1], Exception) else (0, None, None)
-    if s == 200 and j:
-        session_data["cn"] = int(j.get('nonce', 0))
-        session_data["cb"] = float(j.get('balance', 0))
-        session_data["lu"] = now
-        if s2 == 200 and j2:
-            our = [tx for tx in j2.get('staged_transactions', []) if tx.get('from') == session_data["addr"]]
-            if our:
-                session_data["cn"] = max(session_data["cn"], max(int(tx.get('nonce', 0)) for tx in our))
-    elif s == 404:
-        session_data["cn"], session_data["cb"], session_data["lu"] = 0, 0.0, now
-    elif s == 200 and t and not j:
-        try:
-            parts = t.strip().split()
-            if len(parts) >= 2:
-                session_data["cb"] = float(parts[0]) if parts[0].replace('.', '').isdigit() else 0.0
-                session_data["cn"] = int(parts[1]) if parts[1].isdigit() else 0
-                session_data["lu"] = now
-            else:
+    try:
+        now = time.time()
+        if session_data["cb"] is not None and (now - session_data["lu"]) < 30:
+            return session_data["cn"], session_data["cb"]
+        results = await asyncio.gather(
+            req(session_data["rpc"], 'GET', f'/balance/{session_data["addr"]}'),
+            req(session_data["rpc"], 'GET', '/staging', 5),
+            return_exceptions=True
+        )
+        s, t, j = results[0] if not isinstance(results[0], Exception) else (0, str(results[0]), None)
+        s2, _, j2 = results[1] if not isinstance(results[1], Exception) else (0, None, None)
+        if s == 200 and j:
+            session_data["cn"] = int(j.get('nonce', 0))
+            session_data["cb"] = float(j.get('balance', 0))
+            session_data["lu"] = now
+            if s2 == 200 and j2:
+                our = [tx for tx in j2.get('staged_transactions', []) if tx.get('from') == session_data["addr"]]
+                if our:
+                    session_data["cn"] = max(session_data["cn"], max(int(tx.get('nonce', 0)) for tx in our))
+        elif s == 404:
+            session_data["cn"], session_data["cb"], session_data["lu"] = 0, 0.0, now
+        elif s == 200 and t and not j:
+            try:
+                parts = t.strip().split()
+                if len(parts) >= 2:
+                    session_data["cb"] = float(parts[0]) if parts[0].replace('.', '').isdigit() else 0.0
+                    session_data["cn"] = int(parts[1]) if parts[1].isdigit() else 0
+                    session_data["lu"] = now
+                else:
+                    session_data["cn"], session_data["cb"] = None, None
+            except:
                 session_data["cn"], session_data["cb"] = None, None
-        except:
-            session_data["cn"], session_data["cb"] = None, None
-    return session_data["cn"], session_data["cb"]
+        return session_data["cn"], session_data["cb"]
+    except Exception as e:
+        logger.error(f"Status fetch error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch status: {str(e)}")
 
 async def gh(session_data: Dict):
     """Get transaction history for the session's wallet."""
-    now = time.time()
-    if now - session_data["lh"] < 60 and session_data["h"]:
-        return
-    s, t, j = await req(session_data["rpc"], 'GET', f'/address/{session_data["addr"]}?limit=20')
-    if s != 200 or (not j and not t):
-        return
-    if j and 'recent_transactions' in j:
-        tx_hashes = [ref["hash"] for ref in j.get('recent_transactions', [])]
-        tx_results = await asyncio.gather(*[req(session_data["rpc"], 'GET', f'/tx/{hash}', 5) for hash in tx_hashes], return_exceptions=True)
-        existing_hashes = {tx['hash'] for tx in session_data["h"]}
-        nh = []
-        for i, (ref, result) in enumerate(zip(j.get('recent_transactions', []), tx_results)):
-            if isinstance(result, Exception):
-                continue
-            s2, _, j2 = result
-            if s2 == 200 and j2 and 'parsed_tx' in j2:
-                p = j2['parsed_tx']
-                tx_hash = ref['hash']
-                if tx_hash in existing_hashes:
+    try:
+        now = time.time()
+        if now - session_data["lh"] < 60 and session_data["h"]:
+            return
+        s, t, j = await req(session_data["rpc"], 'GET', f'/address/{session_data["addr"]}?limit=20')
+        if s != 200 or (not j and not t):
+            return
+        if j and 'recent_transactions' in j:
+            tx_hashes = [ref["hash"] for ref in j.get('recent_transactions', [])]
+            tx_results = await asyncio.gather(*[req(session_data["rpc"], 'GET', f'/tx/{hash}', 5) for hash in tx_hashes], return_exceptions=True)
+            existing_hashes = {tx['hash'] for tx in session_data["h"]}
+            nh = []
+            for i, (ref, result) in enumerate(zip(j.get('recent_transactions', []), tx_results)):
+                if isinstance(result, Exception):
                     continue
-                ii = p.get('to') == session_data["addr"]
-                ar = p.get('amount_raw', p.get('amount', '0'))
-                a = float(ar) if '.' in str(ar) else int(ar) / μ
-                nh.append({
-                    'time': datetime.fromtimestamp(p.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S'),
-                    'hash': tx_hash,
-                    'amt': a,
-                    'to': p.get('to') if not ii else p.get('from'),
-                    'type': 'in' if ii else 'out',
-                    'ok': True,
-                    'nonce': p.get('nonce', 0),
-                    'epoch': ref.get('epoch', 0)
-                })
-        oh = datetime.now() - timedelta(hours=1)
-        session_data["h"] = sorted(nh + [tx for tx in session_data["h"] if datetime.strptime(tx.get('time', datetime.now().strftime('%Y-%m-%d %H:%M:%S')), '%Y-%m-%d %H:%M:%S') > oh], key=lambda x: datetime.strptime(x['time'], '%Y-%m-%d %H:%M:%S'), reverse=True)[:50]
-        session_data["lh"] = now
-    elif s == 404 or (s == 200 and t and 'no transactions' in t.lower()):
-        session_data["h"].clear()
-        session_data["lh"] = now
+                s2, _, j2 = result
+                if s2 == 200 and j2 and 'parsed_tx' in j2:
+                    p = j2['parsed_tx']
+                    tx_hash = ref['hash']
+                    if tx_hash in existing_hashes:
+                        continue
+                    ii = p.get('to') == session_data["addr"]
+                    ar = p.get('amount_raw', p.get('amount', '0'))
+                    a = float(ar) if '.' in str(ar) else int(ar) / μ
+                    nh.append({
+                        'time': datetime.fromtimestamp(p.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S'),
+                        'hash': tx_hash,
+                        'amt': a,
+                        'to': p.get('to') if not ii else p.get('from'),
+                        'type': 'in' if ii else 'out',
+                        'ok': True,
+                        'nonce': p.get('nonce', 0),
+                        'epoch': ref.get('epoch', 0)
+                    })
+            oh = datetime.now() - timedelta(hours=1)
+            session_data["h"] = sorted(nh + [tx for tx in session_data["h"] if datetime.strptime(tx.get('time', datetime.now().strftime('%Y-%m-%d %H:%M:%S')), '%Y-%m-%d %H:%M:%S') > oh], key=lambda x: datetime.strptime(x['time'], '%Y-%m-%d %H:%M:%S'), reverse=True)[:50]
+            session_data["lh"] = now
+        elif s == 404 or (s == 200 and t and 'no transactions' in t.lower()):
+            session_data["h"].clear()
+            session_data["lh"] = now
+    except Exception as e:
+        logger.error(f"History fetch error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch history: {str(e)}")
 
 def mk(session_data: Dict, to: str, a: float, n: int):
     """Create a signed transaction."""
-    tx = {
-        "from": session_data["addr"],
-        "to_": to,
-        "amount": str(int(a * μ)),
-        "nonce": int(n),
-        "ou": "1" if a < 1000 else "3",
-        "timestamp": time.time() + random.random() * 0.01
-    }
-    bl = json.dumps(tx, separators=(",", ":"))
-    sig = base64.b64encode(session_data["sk"].sign(bl.encode()).signature).decode()
-    tx.update(signature=sig, public_key=session_data["pub"])
-    return tx, hashlib.sha256(bl.encode()).hexdigest()
+    try:
+        tx = {
+            "from": session_data["addr"],
+            "to_": to,
+            "amount": str(int(a * μ)),
+            "nonce": int(n),
+            "ou": "1" if a < 1000 else "3",
+            "timestamp": time.time() + random.random() * 0.01
+        }
+        bl = json.dumps(tx, separators=(",", ":"))
+        sig = base64.b64encode(session_data["sk"].sign(bl.encode()).signature).decode()
+        tx.update(signature=sig, public_key=session_data["pub"])
+        return tx, hashlib.sha256(bl.encode()).hexdigest()
+    except Exception as e:
+        logger.error(f"Transaction creation error: {str(e)}")
+        raise ValueError(f"Transaction creation failed: {str(e)}")
 
 async def snd(session_data: Dict, tx):
     """Send a transaction."""
-    t0 = time.time()
-    s, t, j = await req(session_data["rpc"], 'POST', '/send-tx', tx)
-    dt = time.time() - t0
-    if s == 200:
-        if j and j.get('status') == 'accepted':
-            return True, j.get('tx_hash', ''), dt, j
-        elif t.lower().startswith('ok'):
-            return True, t.split()[-1], dt, None
-    return False, json.dumps(j) if j else t, dt, j
+    try:
+        t0 = time.time()
+        s, t, j = await req(session_data["rpc"], 'POST', '/send-tx', tx)
+        dt = time.time() - t0
+        if s == 200:
+            if j and j.get('status') == 'accepted':
+                return True, j.get('tx_hash', ''), dt, j
+            elif t.lower().startswith('ok'):
+                return True, t.split()[-1], dt, None
+        return False, json.dumps(j) if j else t, dt, j
+    except Exception as e:
+        logger.error(f"Send transaction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Send transaction failed: {str(e)}")
 
 @app.on_event("startup")
 async def startup_event():
-    # No wallet loading on startup; each user generates or loads their own
+    logger.info("Application startup")
+    # No wallet loading on startup
     pass
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    logger.info("Application shutdown")
     executor.shutdown(wait=False)
 
 @app.get("/", response_class=HTMLResponse)
@@ -249,6 +282,7 @@ async def serve_index():
         with open("static/index.html") as f:
             return HTMLResponse(content=f.read())
     except Exception as e:
+        logger.error(f"Index serving error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to serve index: {str(e)}")
 
 @app.get("/api/wallet")
@@ -267,6 +301,7 @@ async def get_wallet(session_data: Dict = Depends(get_session)):
             "transactions": sorted(session_data["h"], key=lambda x: datetime.strptime(x['time'], '%Y-%m-%d %H:%M:%S'), reverse=True)
         }
     except Exception as e:
+        logger.error(f"Get wallet error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get wallet: {str(e)}")
 
 @app.post("/api/send")
@@ -301,6 +336,7 @@ async def send_transaction(tx: TransactionRequest, session_data: Dict = Depends(
             }
         raise HTTPException(status_code=400, detail=f"Transaction failed: {hs}")
     except Exception as e:
+        logger.error(f"Send transaction error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Send transaction failed: {str(e)}")
 
 @app.post("/api/multi_send")
@@ -352,6 +388,7 @@ async def multi_send(data: MultiSendRequest, session_data: Dict = Depends(get_se
         session_data["lu"] = 0
         return {"success": s_total, "failed": f_total, "results": results}
     except Exception as e:
+        logger.error(f"Multi-send error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Multi-send failed: {str(e)}")
 
 @app.get("/api/export")
@@ -363,6 +400,7 @@ async def export_keys(session_data: Dict = Depends(get_session)):
             "public_key": session_data["pub"]
         }
     except Exception as e:
+        logger.error(f"Export keys error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Export keys failed: {str(e)}")
 
 @app.post("/api/clear_history")
@@ -372,6 +410,7 @@ async def clear_history(session_data: Dict = Depends(get_session)):
         session_data["lh"] = 0
         return {"status": "history cleared"}
     except Exception as e:
+        logger.error(f"Clear history error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Clear history failed: {str(e)}")
 
 @app.post("/api/generate_wallet")
@@ -396,6 +435,7 @@ async def api_generate_wallet(request: Request):
         }
         return wallet
     except Exception as e:
+        logger.error(f"Generate wallet error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Wallet generation failed: {str(e)}")
 
 @app.post("/api/load_wallet")
@@ -405,4 +445,5 @@ async def load_base64_wallet(data: LoadWalletRequest, request: Request):
             raise HTTPException(status_code=400, detail="Invalid base64 private key")
         return {"status": "wallet loaded", "address": sessions[request.session["session_id"]]["addr"]}
     except Exception as e:
+        logger.error(f"Load wallet error: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Load wallet failed: {str(e)}")
