@@ -18,14 +18,14 @@ from pydantic import BaseModel
 from typing import Dict
 import logging
 
-# Configure logging for Vercel
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Add session middleware with a fixed secret key
-app.add_middleware(SessionMiddleware, secret_key="fixed-secret-key-1234567890", session_cookie="session_id", max_age=None)
+# Simplified session middleware with secure key
+app.add_middleware(SessionMiddleware, secret_key="secure-octra-key-2025", session_cookie="session_id", max_age=None)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -47,7 +47,7 @@ class LoadWalletRequest(BaseModel):
     private_key: str
 
 def base58_encode(data):
-    """Encode bytes to base58 (excluding 0, O, I, l)."""
+    """Encode bytes to base58."""
     try:
         alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
         x = int.from_bytes(data, 'big')
@@ -58,16 +58,16 @@ def base58_encode(data):
         result = result.rjust(44, alphabet[0])
         return result
     except Exception as e:
-        logger.error(f"Base58 encoding error: {str(e)}")
+        logger.error(f"Base58 encode error: {str(e)}")
         raise ValueError(f"Base58 encoding failed: {str(e)}")
 
 def generate_wallet():
-    """Generate a new wallet using nacl.signing."""
+    """Generate a new wallet."""
     try:
         signing_key = nacl.signing.SigningKey.generate()
-        private_key = base64.b64encode(signing_key.encode()).decode()
+        private_key = base64.b64encode(signing_key.encode()).decode('utf-8')
         verify_key = signing_key.verify_key
-        public_key = base64.b64encode(verify_key.encode()).decode()
+        public_key = base64.b64encode(verify_key.encode()).decode('utf-8')
         pubkey_hash = hashlib.sha256(verify_key.encode()).digest()
         address = "oct" + base58_encode(pubkey_hash)[:45]
         if not b58.match(address):
@@ -79,17 +79,17 @@ def generate_wallet():
             "rpc": "https://octra.network"
         }
     except Exception as e:
-        logger.error(f"Wallet generation error: {str(e)}")
+        logger.error(f"Generate wallet error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Wallet generation failed: {str(e)}")
 
 def load_wallet(request: Request, base64_key: str):
-    """Load wallet from base64 private key into session."""
+    """Load wallet from base64 private key."""
     try:
         decoded_key = base64.b64decode(base64_key, validate=True)
         if len(decoded_key) != 32:
             raise ValueError(f"Invalid private key length: {len(decoded_key)} bytes")
         sk = nacl.signing.SigningKey(decoded_key)
-        pub = base64.b64encode(sk.verify_key.encode()).decode()
+        pub = base64.b64encode(sk.verify_key.encode()).decode('utf-8')
         pubkey_hash = hashlib.sha256(sk.verify_key.encode()).digest()
         addr = "oct" + base58_encode(pubkey_hash)[:45]
         if not b58.match(addr):
@@ -112,22 +112,22 @@ def load_wallet(request: Request, base64_key: str):
         }
         return True
     except Exception as e:
-        logger.error(f"Wallet load error: {str(e)}")
+        logger.error(f"Load wallet error: {str(e)}")
         return False
 
 async def get_session(request: Request):
-    """Get session data for the current user."""
+    """Get session data."""
     try:
         session_id = request.session.get("session_id")
         if not session_id or session_id not in sessions:
             raise HTTPException(status_code=400, detail="No wallet loaded. Generate or load a wallet first.")
         return sessions[session_id]
     except Exception as e:
-        logger.error(f"Session retrieval error: {str(e)}")
+        logger.error(f"Session error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Session error: {str(e)}")
 
 async def req(rpc: str, m: str, p: str, d=None, t=10):
-    """Make HTTP request with a new aiohttp.ClientSession per call."""
+    """Make HTTP request."""
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=t)) as session:
             url = f"{rpc}{p}"
@@ -135,7 +135,7 @@ async def req(rpc: str, m: str, p: str, d=None, t=10):
                 text = await resp.text()
                 try:
                     j = json.loads(text) if text else None
-                except:
+                except json.JSONDecodeError:
                     j = None
                 return resp.status, text, j
     except asyncio.TimeoutError:
@@ -146,7 +146,7 @@ async def req(rpc: str, m: str, p: str, d=None, t=10):
         return 0, str(e), None
 
 async def st(session_data: Dict):
-    """Get balance and nonce for the session's wallet."""
+    """Get balance and nonce."""
     try:
         now = time.time()
         if session_data["cb"] is not None and (now - session_data["lu"]) < 30:
@@ -185,7 +185,7 @@ async def st(session_data: Dict):
         raise HTTPException(status_code=500, detail=f"Failed to fetch status: {str(e)}")
 
 async def gh(session_data: Dict):
-    """Get transaction history for the session's wallet."""
+    """Get transaction history."""
     try:
         now = time.time()
         if now - session_data["lh"] < 60 and session_data["h"]:
@@ -242,7 +242,7 @@ def mk(session_data: Dict, to: str, a: float, n: int):
             "timestamp": time.time() + random.random() * 0.01
         }
         bl = json.dumps(tx, separators=(",", ":"))
-        sig = base64.b64encode(session_data["sk"].sign(bl.encode()).signature).decode()
+        sig = base64.b64encode(session_data["sk"].sign(bl.encode()).signature).decode('utf-8')
         tx.update(signature=sig, public_key=session_data["pub"])
         return tx, hashlib.sha256(bl.encode()).hexdigest()
     except Exception as e:
@@ -268,7 +268,6 @@ async def snd(session_data: Dict, tx):
 @app.on_event("startup")
 async def startup_event():
     logger.info("Application startup")
-    # No wallet loading on startup
     pass
 
 @app.on_event("shutdown")
@@ -416,6 +415,7 @@ async def clear_history(session_data: Dict = Depends(get_session)):
 @app.post("/api/generate_wallet")
 async def api_generate_wallet(request: Request):
     try:
+        logger.info("Generating new wallet")
         wallet = generate_wallet()
         session_id = request.session.get("session_id")
         if not session_id:
@@ -433,17 +433,21 @@ async def api_generate_wallet(request: Request):
             "lh": 0,
             "h": []
         }
+        logger.info(f"Wallet generated: address={wallet['address']}")
         return wallet
     except Exception as e:
-        logger.error(f"Generate wallet error: {str(e)}")
+        logger.error(f"Generate wallet endpoint error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Wallet generation failed: {str(e)}")
 
 @app.post("/api/load_wallet")
 async def load_base64_wallet(data: LoadWalletRequest, request: Request):
     try:
+        logger.info("Loading wallet")
         if not load_wallet(request, data.private_key):
             raise HTTPException(status_code=400, detail="Invalid base64 private key")
-        return {"status": "wallet loaded", "address": sessions[request.session["session_id"]]["addr"]}
+        session_id = request.session["session_id"]
+        logger.info(f"Wallet loaded: address={sessions[session_id]['addr']}")
+        return {"status": "wallet loaded", "address": sessions[session_id]["addr"]}
     except Exception as e:
-        logger.error(f"Load wallet error: {str(e)}")
+        logger.error(f"Load wallet endpoint error: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Load wallet failed: {str(e)}")
