@@ -16,8 +16,10 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
+# Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Configuration
 μ = 1_000_000
 b58 = re.compile(r"^oct[1-9A-HJ-NP-Za-km-z]{40,48}$")
 priv, addr, rpc = None, None, None
@@ -43,26 +45,6 @@ def base58_encode(data):
         result = alphabet[r] + result
     result = result.rjust(44, alphabet[0])
     return result
-
-def generate_wallet():
-    """Generate a new wallet using nacl.signing."""
-    try:
-        signing_key = nacl.signing.SigningKey.generate()
-        private_key = base64.b64encode(signing_key.encode()).decode()
-        verify_key = signing_key.verify_key
-        public_key = base64.b64encode(verify_key.encode()).decode()
-        pubkey_hash = hashlib.sha256(verify_key.encode()).digest()
-        address = "oct" + base58_encode(pubkey_hash)[:45]
-        if not b58.match(address):
-            print(f"Generated address {address} does not match expected format")
-        return {
-            "private_key": private_key,
-            "public_key": public_key,
-            "address": address,
-            "rpc": "https://octra.network"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Wallet generation failed: {str(e)}")
 
 def load_wallet(base64_key=None):
     """Load wallet from base64 private key."""
@@ -278,20 +260,6 @@ async def send_transaction(tx: TransactionRequest):
         raise HTTPException(status_code=400, detail=f"Transaction failed: {hs}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Send transaction failed: {str(e)}")
-
-@app.post("/api/generate_wallet")
-async def api_generate_wallet():
-    try:
-        wallet = generate_wallet()
-        global priv, addr, rpc, sk, pub
-        priv = wallet['private_key']
-        addr = wallet['address']
-        rpc = wallet['rpc']
-        sk = nacl.signing.SigningKey(base64.b64decode(priv))
-        pub = base64.b64encode(sk.verify_key.encode()).decode()
-        return wallet
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Wallet generation failed: {str(e)}")
 
 @app.post("/api/load_wallet")
 async def load_base64_wallet(data: LoadWalletRequest):
