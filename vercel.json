@@ -16,8 +16,12 @@
       "dest": "api/index.py"
     },
     {
+      "src": "/static/(.*)",
+      "dest": "/static/$1"
+    },
+    {
       "src": "/(.*)",
-      "dest": "static/index.html",
+      "dest": "/static/index.html",
       "headers": {
         "Cache-Control": "public, max-age=0, must-revalidate"
       }
