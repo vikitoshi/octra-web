@@ -1,24 +1,34 @@
 async function fetchWallet() {
-    const response = await fetch('/api/wallet');
-    const data = await response.json();
-    document.getElementById('address').textContent = data.address || 'N/A';
-    document.getElementById('balance').textContent = data.balance;
-    document.getElementById('nonce').textContent = data.nonce;
-    document.getElementById('public_key').textContent = data.public_key ? data.public_key.substring(0, 20) + '...' : 'N/A';
-    document.getElementById('pending_txs').textContent = data.pending_txs;
-    const tbody = document.querySelector('#transactions tbody');
-    tbody.innerHTML = '';
-    data.transactions.forEach(tx => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>${tx.time}</td>
-            <td>${tx.type}</td>
-            <td>${tx.amt.toFixed(6)}</td>
-            <td>${tx.to.substring(0, 20)}...</td>
-            <td>${tx.epoch ? `Epoch ${tx.epoch}` : 'Pending'}</td>
-        `;
-        tbody.appendChild(tr);
-    });
+    const message = document.getElementById('message');
+    try {
+        const response = await fetch('/api/wallet');
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to fetch wallet');
+        }
+        const data = await response.json();
+        document.getElementById('address').textContent = data.address || 'N/A';
+        document.getElementById('balance').textContent = data.balance;
+        document.getElementById('nonce').textContent = data.nonce;
+        document.getElementById('public_key').textContent = data.public_key ? data.public_key.substring(0, 20) + '...' : 'N/A';
+        document.getElementById('pending_txs').textContent = data.pending_txs;
+        const tbody = document.querySelector('#transactions tbody');
+        tbody.innerHTML = '';
+        data.transactions.forEach(tx => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${tx.time}</td>
+                <td>${tx.type}</td>
+                <td>${tx.amt.toFixed(6)}</td>
+                <td>${tx.to.substring(0, 20)}...</td>
+                <td>${tx.epoch ? `Epoch ${tx.epoch}` : 'Pending'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } catch (error) {
+        message.textContent = `Error: ${error.message}`;
+        message.className = 'error';
+    }
 }
 
 function showSendForm() {
@@ -77,7 +87,7 @@ async function sendTransaction(event) {
             hideForms();
             fetchWallet();
         } else {
-            message.textContent = data.detail;
+            message.textContent = `Error: ${data.detail}`;
             message.className = 'error';
         }
     } catch (error) {
@@ -106,7 +116,7 @@ async function multiSend(event) {
             hideForms();
             fetchWallet();
         } else {
-            message.textContent = data.detail;
+            message.textContent = `Error: ${data.detail}`;
             message.className = 'error';
         }
     } catch (error) {
@@ -118,16 +128,22 @@ async function multiSend(event) {
 async function exportKeys() {
     hideForms();
     const form = document.getElementById('export-keys');
+    const message = document.getElementById('message');
     try {
         const response = await fetch('/api/export');
         const data = await response.json();
-        document.getElementById('export_address').textContent = data.address;
-        document.getElementById('export_private_key').textContent = data.private_key;
-        document.getElementById('export_public_key').textContent = data.public_key;
-        form.classList.add('visible');
+        if (response.ok) {
+            document.getElementById('export_address').textContent = data.address;
+            document.getElementById('export_private_key').textContent = data.private_key;
+            document.getElementById('export_public_key').textContent = data.public_key;
+            form.classList.add('visible');
+        } else {
+            message.textContent = `Error: ${data.detail}`;
+            message.className = 'error';
+        }
     } catch (error) {
-        document.getElementById('message').textContent = `Error: ${error.message}`;
-        document.getElementById('message').className = 'error';
+        message.textContent = `Error: ${error.message}`;
+        message.className = 'error';
     }
 }
 
