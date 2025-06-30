@@ -1,0 +1,302 @@
+import json
+import base64
+import hashlib
+import time
+import re
+import random
+import aiohttp
+import asyncio
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+import nacl.signing
+import os
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from pydantic import BaseModel
+
+app = FastAPI()
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Configuration
+μ = 1_000_000
+b58 = re.compile(r"^oct[1-9A-HJ-NP-Za-km-z]{44}$")
+priv, addr, rpc = None, None, None
+sk, pub = None, None
+cb, cn, lu, lh = None, None, 0, 0
+h = []
+session = None
+executor = ThreadPoolExecutor(max_workers=1)
+
+class TransactionRequest(BaseModel):
+    to: str
+    amount: float
+
+class MultiSendRequest(BaseModel):
+    recipients: list[dict]
+
+def load_wallet():
+    global priv, addr, rpc, sk, pub
+    try:
+        # Use environment variables for sensitive data
+        priv = os.getenv("WALLET_PRIVATE_KEY")
+        addr = os.getenv("WALLET_ADDRESS")
+        rpc = os.getenv("RPC_URL", "https://octra.network")
+        if not priv or not addr:
+            raise ValueError("Wallet not configured")
+        sk = nacl.signing.SigningKey(base64.b64decode(priv))
+        pub = base64.b64encode(sk.verify_key.encode()).decode()
+        return True
+    except Exception as e:
+        print(f"Wallet load error: {e}")
+        return False
+
+async def req(m, p, d=None, t=10):
+    global session
+    if not session:
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=t))
+    try:
+        url = f"{rpc}{p}"
+        async with getattr(session, m.lower())(url, json=d if m == 'POST' else None) as resp:
+            text = await resp.text()
+            try:
+                j = json.loads(text) if text else None
+            except:
+                j = None
+            return resp.status, text, j
+    except asyncio.TimeoutError:
+        return 0, "timeout", None
+    except Exception as e:
+        return 0, str(e), None
+
+async def st():
+    global cb, cn, lu
+    now = time.time()
+    if cb is not None and (now - lu) < 30:
+        return cn, cb
+    results = await asyncio.gather(
+        req('GET', f'/balance/{addr}'),
+        req('GET', '/staging', 5),
+        return_exceptions=True
+    )
+    s, t, j = results[0] if not isinstance(results[0], Exception) else (0, str(results[0]), None)
+    s2, _, j2 = results[1] if not isinstance(results[1], Exception) else (0, None, None)
+    if s == 200 and j:
+        cn = int(j.get('nonce', 0))
+        cb = float(j.get('balance', 0))
+        lu = now
+        if s2 == 200 and j2:
+            our = [tx for tx in j2.get('staged_transactions', []) if tx.get('from') == addr]
+            if our:
+                cn = max(cn, max(int(tx.get('nonce', 0)) for tx in our))
+    elif s == 404:
+        cn, cb, lu = 0, 0.0, now
+    elif s == 200 and t and not j:
+        try:
+            parts = t.strip().split()
+            if len(parts) >= 2:
+                cb = float(parts[0]) if parts[0].replace('.', '').isdigit() else 0.0
+                cn = int(parts[1]) if parts[1].isdigit() else 0
+                lu = now
+            else:
+                cn, cb = None, None
+        except:
+            cn, cb = None, None
+    return cn, cb
+
+async def gh():
+    global h, lh
+    now = time.time()
+    if now - lh < 60 and h:
+        return
+    s, t, j = await req('GET', f'/address/{addr}?limit=20')
+    if s != 200 or (not j and not t):
+        return
+    if j and 'recent_transactions' in j:
+        tx_hashes = [ref["hash"] for ref in j.get('recent_transactions', [])]
+        tx_results = await asyncio.gather(*[req('GET', f'/tx/{hash}', 5) for hash in tx_hashes], return_exceptions=True)
+        existing_hashes = {tx['hash'] for tx in h}
+        nh = []
+        for i, (ref, result) in enumerate(zip(j.get('recent_transactions', []), tx_results)):
+            if isinstance(result, Exception):
+                continue
+            s2, _, j2 = result
+            if s2 == 200 and j2 and 'parsed_tx' in j2:
+                p = j2['parsed_tx']
+                tx_hash = ref['hash']
+                if tx_hash in existing_hashes:
+                    continue
+                ii = p.get('to') == addr
+                ar = p.get('amount_raw', p.get('amount', '0'))
+                a = float(ar) if '.' in str(ar) else int(ar) / μ
+                nh.append({
+                    'time': datetime.fromtimestamp(p.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S'),
+                    'hash': tx_hash,
+                    'amt': a,
+                    'to': p.get('to') if not ii else p.get('from'),
+                    'type': 'in' if ii else 'out',
+                    'ok': True,
+                    'nonce': p.get('nonce', 0),
+                    'epoch': ref.get('epoch', 0)
+                })
+        oh = datetime.now() - timedelta(hours=1)
+        h[:] = sorted(nh + [tx for tx in h if datetime.strptime(tx.get('time', datetime.now().strftime('%Y-%m-%d %H:%M:%S')), '%Y-%m-%d %H:%M:%S') > oh], key=lambda x: datetime.strptime(x['time'], '%Y-%m-%d %H:%M:%S'), reverse=True)[:50]
+        lh = now
+    elif s == 404 or (s == 200 and t and 'no transactions' in t.lower()):
+        h.clear()
+        lh = now
+
+def mk(to, a, n):
+    tx = {
+        "from": addr,
+        "to_": to,
+        "amount": str(int(a * μ)),
+        "nonce": int(n),
+        "ou": "1" if a < 1000 else "3",
+        "timestamp": time.time() + random.random() * 0.01
+    }
+    bl = json.dumps(tx, separators=(",", ":"))
+    sig = base64.b64encode(sk.sign(bl.encode()).signature).decode()
+    tx.update(signature=sig, public_key=pub)
+    return tx, hashlib.sha256(bl.encode()).hexdigest()
+
+async def snd(tx):
+    t0 = time.time()
+    s, t, j = await req('POST', '/send-tx', tx)
+    dt = time.time() - t0
+    if s == 200:
+        if j and j.get('status') == 'accepted':
+            return True, j.get('tx_hash', ''), dt, j
+        elif t.lower().startswith('ok'):
+            return True, t.split()[-1], dt, None
+    return False, json.dumps(j) if j else t, dt, j
+
+@app.on_event("startup")
+async def startup_event():
+    if not load_wallet():
+        raise HTTPException(status_code=500, detail="Wallet configuration error")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global session
+    if session:
+        await session.close()
+    executor.shutdown(wait=False)
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_index():
+    with open("static/index.html") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/api/wallet")
+async def get_wallet():
+    n, b = await st()
+    await gh()
+    s, _, j = await req('GET', '/staging', 2)
+    sc = len([tx for tx in j.get('staged_transactions', []) if tx.get('from') == addr]) if j else 0
+    return {
+        "address": addr,
+        "balance": f"{b:.6f} oct" if b is not None else "N/A",
+        "nonce": n if n is not None else "N/A",
+        "public_key": pub,
+        "pending_txs": sc,
+        "transactions": sorted(h, key=lambda x: datetime.strptime(x['time'], '%Y-%m-%d %H:%M:%S'), reverse=True)
+    }
+
+@app.post("/api/send")
+async def send_transaction(tx: TransactionRequest):
+    if not b58.match(tx.to):
+        raise HTTPException(status_code=400, detail="Invalid address")
+    if not re.match(r"^\d+(\.\d+)?$", str(tx.amount)) or tx.amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+    n, b = await st()
+    if n is None:
+        raise HTTPException(status_code=500, detail="Failed to get nonce")
+    if not b or b < tx.amount:
+        raise HTTPException(status_code=400, detail=f"Insufficient balance ({b:.6f} < {tx.amount})")
+    t, _ = mk(tx.to, tx.amount, n + 1)
+    ok, hs, dt, r = await snd(t)
+    if ok:
+        h.append({
+            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'hash': hs,
+            'amt': tx.amount,
+            'to': tx.to,
+            'type': 'out',
+            'ok': True
+        })
+        global lu
+        lu = 0
+        return {
+            "status": "success",
+            "tx_hash": hs,
+            "time": f"{dt:.2f}s",
+            "pool_size": r.get('pool_info', {}).get('total_pool_size', 0) if r else 0
+        }
+    raise HTTPException(status_code=400, detail=f"Transaction failed: {hs}")
+
+@app.post("/api/multi_send")
+async def multi_send(data: MultiSendRequest):
+    recipients = [(r["to"], r["amount"]) for r in data.recipients]
+    tot = sum(a for _, a in recipients)
+    for to, a in recipients:
+        if not b58.match(to):
+            raise HTTPException(status_code=400, detail=f"Invalid address: {to}")
+        if not re.match(r"^\d+(\.\d+)?$", str(a)) or a <= 0:
+            raise HTTPException(status_code=400, detail=f"Invalid amount: {a}")
+    n, b = await st()
+    if n is None:
+        raise HTTPException(status_code=500, detail="Failed to get nonce")
+    if not b or b < tot:
+        raise HTTPException(status_code=400, detail=f"Insufficient balance ({b:.6f} < {tot})")
+    batch_size = 5
+    batches = [recipients[i:i+batch_size] for i in range(0, len(recipients), batch_size)]
+    s_total, f_total = 0, 0
+    results = []
+    for batch_idx, batch in enumerate(batches):
+        tasks = []
+        for i, (to, a) in enumerate(batch):
+            idx = batch_idx * batch_size + i
+            t, _ = mk(to, a, n + 1 + idx)
+            tasks.append(snd(t))
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, (result, (to, a)) in enumerate(zip(batch_results, batch)):
+            if isinstance(result, Exception):
+                f_total += 1
+                results.append({"to": to, "amount": a, "status": "failed", "error": str(result)})
+            else:
+                ok, hs, _, _ = result
+                if ok:
+                    s_total += 1
+                    h.append({
+                        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'hash': hs,
+                        'amt': a,
+                        'to': to,
+                        'type': 'out',
+                        'ok': True
+                    })
+                    results.append({"to": to, "amount": a, "status": "success", "tx_hash": hs})
+                else:
+                    f_total += 1
+                    results.append({"to": to, "amount": a, "status": "failed", "error": hs})
+    global lu
+    lu = 0
+    return {"success": s_total, "failed": f_total, "results": results}
+
+@app.get("/api/export")
+async def export_keys():
+    return {
+        "address": addr,
+        "private_key": priv,
+        "public_key": pub
+    }
+
+@app.post("/api/clear_history")
+async def clear_history():
+    global h, lh
+    h.clear()
+    lh = 0
+    return {"status": "history cleared"}
