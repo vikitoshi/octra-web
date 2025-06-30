@@ -2,11 +2,12 @@ let walletLoaded = false;
 let pendingTransaction = null;
 
 async function fetchWallet() {
-    const message = document.getElementById('message');
+    const message = document.getElementById('errorMessage');
     try {
         document.getElementById('balance').textContent = 'Loading...';
         document.getElementById('nonce').textContent = 'Loading...';
         document.getElementById('pending_txs').textContent = 'Loading...';
+        document.getElementById('loadingIndicator').classList.remove('hidden');
         const response = await fetch('/api/wallet');
         if (!response.ok) {
             const errorData = await response.json();
@@ -32,45 +33,69 @@ async function fetchWallet() {
         });
     } catch (error) {
         message.textContent = `Error: ${error.message}`;
-        message.className = 'error';
+        message.classList.remove('hidden');
         document.getElementById('balance').textContent = 'N/A';
         document.getElementById('nonce').textContent = 'N/A';
         document.getElementById('pending_txs').textContent = '0';
+    } finally {
+        document.getElementById('loadingIndicator').classList.add('hidden');
     }
 }
 
 function showWelcomeView() {
     document.getElementById('welcome-view').classList.remove('hidden');
     document.getElementById('wallet-view').classList.add('hidden');
-    document.getElementById('generate-wallet-form').classList.add('hidden');
-    document.getElementById('load-wallet-form').classList.add('hidden');
-    document.getElementById('message').textContent = '';
+    document.getElementById('errorMessage').textContent = '';
+    document.getElementById('copySuccessMessage').classList.add('hidden');
     walletLoaded = false;
 }
 
 function showWalletView() {
     document.getElementById('welcome-view').classList.add('hidden');
     document.getElementById('wallet-view').classList.remove('hidden');
-    document.getElementById('generate-wallet-form').classList.add('hidden');
-    document.getElementById('load-wallet-form').classList.add('hidden');
+    document.getElementById('errorMessage').textContent = '';
+    document.getElementById('copySuccessMessage').classList.add('hidden');
     walletLoaded = true;
     fetchWallet();
 }
 
-function showGenerateWalletForm() {
-    document.getElementById('welcome-view').classList.add('hidden');
-    document.getElementById('wallet-view').classList.add('hidden');
-    document.getElementById('generate-wallet-form').classList.remove('hidden');
-    document.getElementById('load-wallet-form').classList.add('hidden');
-    document.getElementById('message').textContent = '';
-}
-
-function showLoadWalletForm() {
-    document.getElementById('welcome-view').classList.add('hidden');
-    document.getElementById('wallet-view').classList.add('hidden');
-    document.getElementById('generate-wallet-form').classList.add('hidden');
-    document.getElementById('load-wallet-form').classList.remove('hidden');
-    document.getElementById('message').textContent = '';
+async function loadWallet(event) {
+    event.preventDefault();
+    const private_key = document.getElementById('private_key').value.trim();
+    const message = document.getElementById('errorMessage');
+    const loadButton = document.getElementById('loadButton');
+    try {
+        if (!private_key) {
+            message.textContent = 'Please enter a base64 private key.';
+            message.classList.remove('hidden');
+            return;
+        }
+        loadButton.disabled = true;
+        loadButton.textContent = 'Loading...';
+        document.getElementById('loadingIndicator').classList.remove('hidden');
+        const response = await fetch('/api/load_wallet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ private_key })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            document.getElementById('copySuccessMessage').textContent = `Wallet loaded! Address: ${data.address}`;
+            document.getElementById('copySuccessMessage').classList.remove('hidden');
+            showWalletView();
+        } else {
+            message.textContent = `Error: ${data.detail}`;
+            message.classList.remove('hidden');
+        }
+    } catch (error) {
+        message.textContent = `Error: ${error.message}`;
+        message.classList.remove('hidden');
+    } finally {
+        loadButton.disabled = false;
+        loadButton.textContent = 'Load Wallet';
+        document.getElementById('loadingIndicator').classList.add('hidden');
+        document.getElementById('private_key').value = '';
+    }
 }
 
 async function sendTransaction(event) {
@@ -84,13 +109,14 @@ async function sendTransaction(event) {
 }
 
 async function confirmTransaction() {
-    const message = document.getElementById('message');
+    const message = document.getElementById('errorMessage');
     const sendButton = document.getElementById('send-button');
     const confirmButton = document.getElementById('confirm-button');
     try {
         sendButton.disabled = true;
         confirmButton.disabled = true;
         sendButton.textContent = 'Sending...';
+        document.getElementById('loadingIndicator').classList.remove('hidden');
         const response = await fetch('/api/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -98,97 +124,51 @@ async function confirmTransaction() {
         });
         const data = await response.json();
         if (response.ok) {
-            message.textContent = `Transaction successful! Hash: ${data.tx_hash}, Time: ${data.time}`;
-            message.className = 'success';
+            document.getElementById('copySuccessMessage').textContent = `Transaction successful! Hash: ${data.tx_hash}, Time: ${data.time}`;
+            document.getElementById('copySuccessMessage').classList.remove('hidden');
             document.getElementById('to_address').value = '';
             document.getElementById('amount').value = '';
             fetchWallet();
         } else {
             message.textContent = `Error: ${data.detail}`;
-            message.className = 'error';
+            message.classList.remove('hidden');
         }
     } catch (error) {
         message.textContent = `Error: ${error.message}`;
-        message.className = 'error';
+        message.classList.remove('hidden');
     } finally {
         sendButton.disabled = false;
         confirmButton.disabled = false;
-        sendButton.textContent = 'Send';
+        sendButton.textContent = 'Send Transaction';
         document.getElementById('confirmation-modal').classList.add('hidden');
+        document.getElementById('loadingIndicator').classList.add('hidden');
         pendingTransaction = null;
     }
 }
 
 function cancelTransaction() {
     document.getElementById('confirmation-modal').classList.add('hidden');
+    document.getElementById('errorMessage').textContent = '';
     pendingTransaction = null;
 }
 
-async function generateWallet() {
-    const message = document.getElementById('message');
-    const generateButton = document.getElementById('generate-button');
-    try {
-        generateButton.disabled = true;
-        generateButton.textContent = 'Generating...';
-        const response = await fetch('/api/generate_wallet', { method: 'POST' });
-        const data = await response.json();
-        if (response.ok) {
-            message.innerHTML = `New wallet generated! Address: ${data.address} <button onclick="copyToClipboard('${data.address}')" class="text-blue-500 hover:text-blue-700 text-sm ml-2">Copy</button><br>Private Key: ${data.private_key} <button onclick="copyToClipboard('${data.private_key}')" class="text-blue-500 hover:text-blue-700 text-sm ml-2">Copy</button> (save securely!)`;
-            message.className = 'success';
-            showWalletView();
-        } else {
-            message.textContent = `Error: ${data.detail}`;
-            message.className = 'error';
-        }
-    } catch (error) {
-        message.textContent = `Error: ${error.message}`;
-        message.className = 'error';
-    } finally {
-        generateButton.disabled = false;
-        generateButton.textContent = 'Generate';
+function copyToClipboard(elementId) {
+    const message = document.getElementById('copySuccessMessage');
+    const text = elementId === 'address' ? document.getElementById('address').textContent : document.getElementById('private_key').value.trim();
+    if (!text) {
+        document.getElementById('errorMessage').textContent = 'No text to copy.';
+        document.getElementById('errorMessage').classList.remove('hidden');
+        return;
     }
-}
-
-async function loadWallet(event) {
-    event.preventDefault();
-    const private_key = document.getElementById('private_key').value;
-    const message = document.getElementById('message');
-    const loadButton = document.getElementById('load-button');
-    try {
-        loadButton.disabled = true;
-        loadButton.textContent = 'Loading...';
-        const response = await fetch('/api/load_wallet', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ private_key })
-        });
-        const data = await response.json();
-        if (response.ok) {
-            message.textContent = `Wallet loaded! Address: ${data.address}`;
-            message.className = 'success';
-            showWalletView();
-        } else {
-            message.textContent = `Error: ${data.detail}`;
-            message.className = 'error';
-        }
-    } catch (error) {
-        message.textContent = `Error: ${error.message}`;
-        message.className = 'error';
-    } finally {
-        loadButton.disabled = false;
-        loadButton.textContent = 'Load';
-        document.getElementById('private_key').value = '';
-    }
-}
-
-function copyToClipboard(text) {
-    const message = document.getElementById('message');
     navigator.clipboard.writeText(text).then(() => {
-        message.textContent = 'Copied to clipboard!';
-        message.className = 'success';
+        document.getElementById('copySuccessMessage').textContent = `${elementId === 'address' ? 'Address' : 'Private key'} copied successfully!`;
+        document.getElementById('copySuccessMessage').classList.remove('hidden');
+        setTimeout(() => {
+            document.getElementById('copySuccessMessage').classList.add('hidden');
+        }, 3000);
     }).catch(err => {
-        message.textContent = `Error copying: ${err}`;
-        message.className = 'error';
+        document.getElementById('errorMessage').textContent = `Error copying: ${err}`;
+        document.getElementById('errorMessage').classList.remove('hidden');
     });
 }
 
