@@ -5,45 +5,115 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Octra Wallet</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body class="bg-gray-100 min-h-screen flex flex-col">
-    <div class="container mx-auto px-4 py-8 flex-grow">
+<body class="flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-lg transform transition-all duration-300 hover:scale-[1.01] border border-gray-100 backdrop-filter backdrop-blur-sm bg-opacity-90">
+        <h1 class="text-5xl font-extrabold text-center text-gray-900 mb-8 tracking-tight">
+            <span class="bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-700 animate-pulse">
+                Octra Wallet
+            </span>
+        </h1>
+
         <div id="welcome-view" class="view">
-            <h1 class="text-3xl font-bold text-blue-600 mb-6 text-center">Octra Wallet</h1>
-            <div class="flex flex-col sm:flex-row justify-center gap-4">
-                <button onclick="showGenerateWalletForm()" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition duration-300">Generate New Wallet</button>
-                <button onclick="showLoadWalletForm()" class="bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition duration-300">Load Wallet</button>
+            <div class="mb-7">
+                <label for="private_key" class="block text-gray-700 text-lg font-medium mb-2">Base64 Private Key:</label>
+                <div class="relative flex items-center">
+                    <input
+                        type="text"
+                        id="private_key"
+                        placeholder="Enter base64 private key (e.g., JSLzWHgt...)"
+                        class="w-full pl-5 pr-14 py-3.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-300 focus:border-indigo-500 text-gray-800 transition-all duration-300 placeholder-gray-400 text-base shadow-sm"
+                    />
+                    <button
+                        id="copyKeyButton"
+                        class="absolute right-2.5 p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors duration-200 shadow-sm text-gray-600 hover:text-gray-800"
+                        title="Copy Private Key"
+                    >
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-5 mb-7">
+                <button
+                    id="loadButton"
+                    onclick="loadWallet(event)"
+                    class="flex-1 bg-gradient-to-r from-blue-700 to-indigo-700 text-white py-3.5 rounded-xl font-bold text-lg hover:from-blue-800 hover:to-indigo-800 focus:outline-none focus:ring-3 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-300 transform hover:-translate-y-1 shadow-lg"
+                >
+                    Load Wallet
+                </button>
+                <button
+                    onclick="resetWallet()"
+                    class="flex-1 bg-gray-200 text-gray-800 py-3.5 rounded-xl font-bold text-lg hover:bg-gray-300 focus:outline-none focus:ring-3 focus:ring-gray-400 focus:ring-offset-2 transition-colors duration-200 shadow-md"
+                >
+                    Clear
+                </button>
+            </div>
+            <div id="loadingIndicator" class="hidden flex items-center justify-center mt-6 text-indigo-600 font-semibold space-x-3">
+                <div class="spinner"></div>
+                <span>Loading Wallet...</span>
+            </div>
+            <div id="errorMessage" class="hidden text-center mt-6 p-4 rounded-xl bg-red-50 border border-red-300 text-red-700 font-medium transition-all duration-300 text-base shadow-sm">
+            </div>
+            <div id="copySuccessMessage" class="hidden text-center mt-6 p-4 rounded-xl bg-green-50 border border-green-300 text-green-700 font-medium transition-all duration-300 text-base shadow-sm">
+                Private key copied successfully!
             </div>
         </div>
+
         <div id="wallet-view" class="view hidden">
-            <h1 class="text-3xl font-bold text-blue-600 mb-6 text-center">Octra Wallet</h1>
-            <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">Wallet Information</h2>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <p><strong class="text-gray-600">Address:</strong> <span id="address" class="break-all"></span> <button onclick="copyToClipboard('address')" class="text-blue-500 hover:text-blue-700 text-sm ml-2">Copy</button></p>
-                    <p><strong class="text-gray-600">Balance:</strong> <span id="balance">N/A</span></p>
-                    <p><strong class="text-gray-600">Nonce:</strong> <span id="nonce">N/A</span></p>
-                    <p><strong class="text-gray-600">Pending Txs:</strong> <span id="pending_txs">0</span></p>
+            <div class="mb-7">
+                <h2 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-3 border-indigo-100">Wallet Information</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-5 gap-x-4 text-gray-700">
+                    <p><span class="font-semibold text-gray-800">Address:</span> <span id="address" class="text-gray-900 font-mono text-lg ml-2 break-all"></span> <button onclick="copyToClipboard('address')" class="text-blue-500 hover:text-blue-700 text-sm ml-2">Copy</button></p>
+                    <p><span class="font-semibold text-gray-800">Balance:</span> <span id="balance" class="text-gray-900 font-mono text-lg ml-2">N/A</span></p>
+                    <p><span class="font-semibold text-gray-800">Nonce:</span> <span id="nonce" class="text-gray-900 text-lg ml-2">N/A</span></p>
+                    <p><span class="font-semibold text-gray-800">Pending Txs:</span> <span id="pending_txs" class="text-gray-900 text-lg ml-2">0</span></p>
                 </div>
-                <button onclick="refreshBalance()" class="mt-4 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition duration-300">Refresh Balance</button>
+                <button
+                    onclick="refreshBalance()"
+                    class="mt-4 bg-green-600 text-white px-4 py-2 rounded-xl font-bold text-lg hover:bg-green-700 focus:outline-none focus:ring-3 focus:ring-green-500 focus:ring-offset-2 transition-all duration-300 shadow-md"
+                >
+                    Refresh Balance
+                </button>
             </div>
-            <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">Send Transaction</h2>
+            <div class="mb-7">
+                <h2 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-3 border-indigo-100">Send Transaction</h2>
                 <form id="send-form" onsubmit="sendTransaction(event)">
                     <div class="mb-4">
-                        <label for="to_address" class="block text-gray-600 font-medium">To Address:</label>
-                        <input type="text" id="to_address" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="oct..." required>
+                        <label for="to_address" class="block text-gray-700 text-lg font-medium mb-2">To Address:</label>
+                        <input
+                            type="text"
+                            id="to_address"
+                            class="w-full pl-5 py-3.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-300 focus:border-indigo-500 text-gray-800 transition-all duration-300 placeholder-gray-400 text-base shadow-sm"
+                            placeholder="oct..."
+                            required
+                        />
                     </div>
                     <div class="mb-4">
-                        <label for="amount" class="block text-gray-600 font-medium">Amount (OCT):</label>
-                        <input type="number" step="0.000001" id="amount" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="0.0" required>
+                        <label for="amount" class="block text-gray-700 text-lg font-medium mb-2">Amount (OCT):</label>
+                        <input
+                            type="number"
+                            step="0.000001"
+                            id="amount"
+                            class="w-full pl-5 py-3.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-indigo-300 focus:border-indigo-500 text-gray-800 transition-all duration-300 placeholder-gray-400 text-base shadow-sm"
+                            placeholder="0.0"
+                            required
+                        />
                     </div>
-                    <button type="submit" id="send-button" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition duration-300">Send</button>
+                    <button
+                        type="submit"
+                        id="send-button"
+                        class="w-full bg-gradient-to-r from-blue-700 to-indigo-700 text-white py-3.5 rounded-xl font-bold text-lg hover:from-blue-800 hover:to-indigo-800 focus:outline-none focus:ring-3 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-300 transform hover:-translate-y-1 shadow-lg"
+                    >
+                        Send Transaction
+                    </button>
                 </form>
             </div>
-            <div class="bg-white p-6 rounded-lg shadow-lg">
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">Transaction History</h2>
+            <div class="mb-7">
+                <h2 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-3 border-indigo-100">Transaction History</h2>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left">
                         <thead>
@@ -59,40 +129,49 @@
                     </table>
                 </div>
             </div>
-            <button onclick="resetWallet()" class="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition duration-300">Reset Wallet</button>
+            <button
+                onclick="resetWallet()"
+                class="w-full bg-gray-200 text-gray-800 py-3.5 rounded-xl font-bold text-lg hover:bg-gray-300 focus:outline-none focus:ring-3 focus:ring-gray-400 focus:ring-offset-2 transition-colors duration-200 shadow-md"
+            >
+                Reset Wallet
+            </button>
+            <div id="loadingIndicator" class="hidden flex items-center justify-center mt-6 text-indigo-600 font-semibold space-x-3">
+                <div class="spinner"></div>
+                <span>Loading Data...</span>
+            </div>
+            <div id="errorMessage" class="hidden text-center mt-6 p-4 rounded-xl bg-red-50 border border-red-300 text-red-700 font-medium transition-all duration-300 text-base shadow-sm">
+            </div>
+            <div id="copySuccessMessage" class="hidden text-center mt-6 p-4 rounded-xl bg-green-50 border border-green-300 text-green-700 font-medium transition-all duration-300 text-base shadow-sm">
+                Copied successfully!
+            </div>
         </div>
-        <div id="generate-wallet-form" class="form hidden bg-white p-6 rounded-lg shadow-lg">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">Generate New Wallet</h2>
-            <p class="text-gray-600 mb-4">Generate a new wallet and save the private key securely.</p>
-            <button onclick="generateWallet()" id="generate-button" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition duration-300">Generate</button>
-            <button type="button" onclick="showWelcomeView()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition duration-300">Cancel</button>
-        </div>
-        <div id="load-wallet-form" class="form hidden bg-white p-6 rounded-lg shadow-lg">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">Load Wallet</h2>
-            <form onsubmit="loadWallet(event)">
-                <div class="mb-4">
-                    <label for="private_key" class="block text-gray-600 font-medium">Base64 Private Key:</label>
-                    <input type="text" id="private_key" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter private key" required>
-                </div>
-                <button type="submit" id="load-button" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition duration-300">Load</button>
-                <button type="button" onclick="showWelcomeView()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition duration-300">Cancel</button>
-            </form>
-        </div>
-        <div id="message" class="mt-4 text-center"></div>
+
         <div id="confirmation-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden">
-            <div class="bg-white p-6 rounded-lg shadow-lg">
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">Confirm Transaction</h2>
-                <p class="text-gray-600 mb-4">Are you sure you want to send <span id="confirm-amount"></span> OCT to <span id="confirm-address"></span>?</p>
+            <div class="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-md border border-gray-100 backdrop-filter backdrop-blur-sm bg-opacity-90">
+                <h2 class="text-3xl font-bold text-gray-800 mb-6">Confirm Transaction</h2>
+                <p class="text-gray-700 mb-6">Are you sure you want to send <span id="confirm-amount"></span> OCT to <span id="confirm-address"></span>?</p>
                 <div class="flex justify-end gap-4">
-                    <button onclick="cancelTransaction()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition duration-300">Cancel</button>
-                    <button onclick="confirmTransaction()" id="confirm-button" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition duration-300">Confirm</button>
+                    <button
+                        onclick="cancelTransaction()"
+                        class="bg-gray-200 text-gray-800 py-2 px-4 rounded-xl font-bold hover:bg-gray-300 focus:outline-none focus:ring-3 focus:ring-gray-400 focus:ring-offset-2 transition-colors duration-200 shadow-md"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        onclick="confirmTransaction()"
+                        id="confirm-button"
+                        class="bg-gradient-to-r from-blue-700 to-indigo-700 text-white py-2 px-4 rounded-xl font-bold hover:from-blue-800 hover:to-indigo-800 focus:outline-none focus:ring-3 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-300 shadow-lg"
+                    >
+                        Confirm
+                    </button>
                 </div>
             </div>
         </div>
+
+        <footer class="mt-10 pt-6 border-t border-gray-200 text-center text-gray-600 text-sm">
+            <p>Join Our Telegram Channel: <a href="https://t.me/AirdropInsiderID" target="_blank" class="text-indigo-600 hover:underline font-medium">https://t.me/AirdropInsiderID</a> - vikitoshi</p>
+        </footer>
     </div>
-    <footer class="bg-gray-800 text-white text-center py-4">
-        <p>Join Our Telegram Channel: <a href="https://t.me/AirdropInsiderID" class="text-blue-400 hover:underline" target="_blank">https://t.me/AirdropInsiderID</a> - vikitoshi</p>
-    </footer>
     <script src="/static/script.js"></script>
 </body>
 </html>
