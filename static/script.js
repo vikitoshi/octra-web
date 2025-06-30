@@ -137,12 +137,12 @@ async function generateWallet() {
         const response = await fetch('/api/generate_wallet', { method: 'POST' });
         const data = await response.json();
         if (response.ok) {
-            message.textContent = `New wallet generated! Address: ${data.address}, Private Key: ${data.private_key}`;
+            message.textContent = `New wallet generated! Address: ${data.address}, Private Key: ${data.private_key}, Public Key: ${data.public_key}`;
             message.className = 'success';
             hideForms();
             fetchWallet();
         } else {
-            message.textContent = data.detail;
+            message.textContent = `Error: ${data.detail}`;
             message.className = 'error';
         }
     } catch (error) {
@@ -168,7 +168,7 @@ async function loadWallet(event) {
             hideForms();
             fetchWallet();
         } else {
-            message.textContent = data.detail;
+            message.textContent = `Error: ${data.detail}`;
             message.className = 'error';
         }
     } catch (error) {
