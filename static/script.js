@@ -1,10 +1,10 @@
 async function fetchWallet() {
     const response = await fetch('/api/wallet');
     const data = await response.json();
-    document.getElementById('address').textContent = data.address;
+    document.getElementById('address').textContent = data.address || 'N/A';
     document.getElementById('balance').textContent = data.balance;
     document.getElementById('nonce').textContent = data.nonce;
-    document.getElementById('public_key').textContent = data.public_key.substring(0, 20) + '...';
+    document.getElementById('public_key').textContent = data.public_key ? data.public_key.substring(0, 20) + '...' : 'N/A';
     document.getElementById('pending_txs').textContent = data.pending_txs;
     const tbody = document.querySelector('#transactions tbody');
     tbody.innerHTML = '';
@@ -29,6 +29,16 @@ function showSendForm() {
 function showMultiSendForm() {
     hideForms();
     document.getElementById('multi-send-form').classList.add('visible');
+}
+
+function showGenerateWalletForm() {
+    hideForms();
+    document.getElementById('generate-wallet-form').classList.add('visible');
+}
+
+function showLoadWalletForm() {
+    hideForms();
+    document.getElementById('load-wallet-form').classList.add('visible');
 }
 
 function hideForms() {
@@ -121,16 +131,49 @@ async function exportKeys() {
     }
 }
 
-async function clearHistory() {
+async function generateWallet() {
+    const message = document.getElementById('message');
     try {
-        const response = await fetch('/api/clear_history', { method: 'POST' });
+        const response = await fetch('/api/generate_wallet', { method: 'POST' });
         const data = await response.json();
-        document.getElementById('message').textContent = data.status;
-        document.getElementById('message').className = 'success';
-        fetchWallet();
+        if (response.ok) {
+            message.textContent = `New wallet generated! Address: ${data.address}, Private Key: ${data.private_key}`;
+            message.className = 'success';
+            hideForms();
+            fetchWallet();
+        } else {
+            message.textContent = data.detail;
+            message.className = 'error';
+        }
     } catch (error) {
-        document.getElementById('message').textContent = `Error: ${error.message}`;
-        document.getElementById('message').className = 'error';
+        message.textContent = `Error: ${error.message}`;
+        message.className = 'error';
+    }
+}
+
+async function loadWallet(event) {
+    event.preventDefault();
+    const private_key = document.getElementById('private_key').value;
+    const message = document.getElementById('message');
+    try {
+        const response = await fetch('/api/load_wallet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ private_key })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            message.textContent = `Wallet loaded! Address: ${data.address}`;
+            message.className = 'success';
+            hideForms();
+            fetchWallet();
+        } else {
+            message.textContent = data.detail;
+            message.className = 'error';
+        }
+    } catch (error) {
+        message.textContent = `Error: ${error.message}`;
+        message.className = 'error';
     }
 }
 
@@ -143,6 +186,10 @@ function copyToClipboard(elementId) {
         document.getElementById('message').textContent = `Error copying: ${err}`;
         document.getElementById('message').className = 'error';
     });
+}
+
+function refreshWallet() {
+    fetchWallet();
 }
 
 window.onload = fetchWallet;

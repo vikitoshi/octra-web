@@ -6,11 +6,11 @@ import re
 import random
 import aiohttp
 import asyncio
+import os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import nacl.signing
-import os
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from pydantic import BaseModel
@@ -37,17 +37,66 @@ class TransactionRequest(BaseModel):
 class MultiSendRequest(BaseModel):
     recipients: list[dict]
 
-def load_wallet():
+class LoadWalletRequest(BaseModel):
+    private_key: str
+
+def generate_wallet():
+    """Generate a new wallet using nacl.signing."""
+    try:
+        signing_key = nacl.signing.SigningKey.generate()
+        private_key = base64.b64encode(signing_key.encode()).decode()
+        verify_key = signing_key.verify_key
+        public_key = base64.b64encode(verify_key.encode()).decode()
+        # Assuming address is derived from public key (simplified for Octra)
+        address = "oct" + base64.b64encode(hashlib.sha256(verify_key.encode()).digest()[:32]).decode()[:44]
+        if not b58.match(address):
+            raise ValueError("Generated address does not match expected format")
+        return {
+            "private_key": private_key,
+            "public_key": public_key,
+            "address": address,
+            "rpc": "https://octra.network"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Wallet generation failed: {str(e)}")
+
+def load_wallet(data=None, base64_key=None):
+    """Load wallet from environment variables, file, or base64 private key."""
     global priv, addr, rpc, sk, pub
     try:
-        # Use environment variables for sensitive data
-        priv = os.getenv("WALLET_PRIVATE_KEY")
-        addr = os.getenv("WALLET_ADDRESS")
-        rpc = os.getenv("RPC_URL", "https://octra.network")
-        if not priv or not addr:
-            raise ValueError("Wallet not configured")
-        sk = nacl.signing.SigningKey(base64.b64decode(priv))
-        pub = base64.b64encode(sk.verify_key.encode()).decode()
+        if base64_key:
+            # Load from base64 private key
+            priv = base64_key
+            sk = nacl.signing.SigningKey(base64.b64decode(priv))
+            pub = base64.b64encode(sk.verify_key.encode()).decode()
+            addr = "oct" + base64.b64encode(hashlib.sha256(sk.verify_key.encode()).digest()[:32]).decode()[:44]
+            rpc = "https://octra.network"
+            if not b58.match(addr):
+                raise ValueError("Invalid address format")
+        elif data:
+            # Load from provided data (e.g., JSON)
+            priv = data.get('priv')
+            addr = data.get('addr')
+            rpc = data.get('rpc', 'https://octra.network')
+            sk = nacl.signing.SigningKey(base64.b64decode(priv))
+            pub = base64.b64encode(sk.verify_key.encode()).decode()
+        else:
+            # Try environment variables or file
+            wallet_path = os.getenv("WALLET_PATH", "/tmp/wallet.json")
+            if os.path.exists(wallet_path):
+                with open(wallet_path, 'r') as f:
+                    data = json.load(f)
+                priv = data.get('priv')
+                addr = data.get('addr')
+                rpc = data.get('rpc', 'https://octra.network')
+            else:
+                priv = os.getenv("WALLET_PRIVATE_KEY")
+                addr = os.getenv("WALLET_ADDRESS")
+                rpc = os.getenv("RPC_URL", "https://octra.network")
+            if not priv or not addr:
+                raise ValueError("Wallet not configured")
+            sk = nacl.signing.SigningKey(base64.b64decode(priv))
+            pub = base64.b64encode(sk.verify_key.encode()).decode()
         return True
     except Exception as e:
         print(f"Wallet load error: {e}")
@@ -176,7 +225,20 @@ async def snd(tx):
 @app.on_event("startup")
 async def startup_event():
     if not load_wallet():
-        raise HTTPException(status_code=500, detail="Wallet configuration error")
+        # Generate a new wallet if none is configured
+        wallet = generate_wallet()
+        global priv, addr, rpc, sk, pub
+        priv = wallet['private_key']
+        addr = wallet['address']
+        rpc = wallet['rpc']
+        sk = nacl.signing.SigningKey(base64.b64decode(priv))
+        pub = base64.b64encode(sk.verify_key.encode()).decode()
+        # Optionally save to /tmp/wallet.json
+        try:
+            with open('/tmp/wallet.json', 'w') as f:
+                json.dump(wallet, f, indent=2)
+        except:
+            pass
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -300,3 +362,27 @@ async def clear_history():
     h.clear()
     lh = 0
     return {"status": "history cleared"}
+
+@app.post("/api/generate_wallet")
+async def api_generate_wallet():
+    wallet = generate_wallet()
+    # Save to /tmp/wallet.json (ephemeral)
+    try:
+        with open('/tmp/wallet.json', 'w') as f:
+            json.dump(wallet, f, indent=2)
+    except:
+        pass
+    # Update global variables
+    global priv, addr, rpc, sk, pub
+    priv = wallet['private_key']
+    addr = wallet['address']
+    rpc = wallet['rpc']
+    sk = nacl.signing.SigningKey(base64.b64decode(priv))
+    pub = base64.b64encode(sk.verify_key.encode()).decode()
+    return wallet
+
+@app.post("/api/load_wallet")
+async def load_base64_wallet(data: LoadWalletRequest):
+    if not load_wallet(base64_key=data.private_key):
+        raise HTTPException(status_code=400, detail="Invalid base64 private key")
+    return {"status": "wallet loaded", "address": addr}

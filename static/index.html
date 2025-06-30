@@ -39,6 +39,8 @@
             <button onclick="showMultiSendForm()">Multi Send</button>
             <button onclick="exportKeys()">Export Keys</button>
             <button onclick="clearHistory()">Clear History</button>
+            <button onclick="showGenerateWalletForm()">Generate New Wallet</button>
+            <button onclick="showLoadWalletForm()">Load Wallet</button>
         </div>
         <div id="send-form" class="form hidden">
             <h2>Send Transaction</h2>
@@ -73,7 +75,23 @@
             <p><strong>Private Key:</strong> <span id="export_private_key"></span></p>
             <p><strong>Public Key:</strong> <span id="export_public_key"></span></p>
             <button onclick="copyToClipboard('export_address')">Copy Address</button>
+            <button onclick="copyToClipboard('export_private_key')">Copy Private Key</button>
             <button onclick="hideForms()">Close</button>
+        </div>
+        <div id="generate-wallet-form" class="form hidden">
+            <h2>Generate New Wallet</h2>
+            <p>Generate a new wallet and save the private key securely.</p>
+            <button onclick="generateWallet()">Generate</button>
+            <button type="button" onclick="hideForms()">Cancel</button>
+        </div>
+        <div id="load-wallet-form" class="form hidden">
+            <h2>Load Wallet</h2>
+            <form onsubmit="loadWallet(event)">
+                <label>Base64 Private Key:</label>
+                <input type="text" id="private_key" required>
+                <button type="submit">Load</button>
+                <button type="button" onclick="hideForms()">Cancel</button>
+            </form>
         </div>
         <div id="message"></div>
     </div>
