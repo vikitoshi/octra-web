@@ -26,8 +26,14 @@ async function fetchWallet() {
             tbody.appendChild(tr);
         });
     } catch (error) {
-        message.textContent = `Error: ${error.message}`;
+        message.textContent = `Error: ${error.message}. Please generate or load a wallet.`;
         message.className = 'error';
+        document.getElementById('address').textContent = 'N/A';
+        document.getElementById('balance').textContent = 'N/A';
+        document.getElementById('nonce').textContent = 'N/A';
+        document.getElementById('public_key').textContent = 'N/A';
+        document.getElementById('pending_txs').textContent = '0';
+        document.querySelector('#transactions tbody').innerHTML = '';
     }
 }
 
@@ -153,7 +159,7 @@ async function generateWallet() {
         const response = await fetch('/api/generate_wallet', { method: 'POST' });
         const data = await response.json();
         if (response.ok) {
-            message.textContent = `New wallet generated! Address: ${data.address}, Private Key: ${data.private_key}, Public Key: ${data.public_key}`;
+            message.textContent = `New wallet generated! Address: ${data.address}, Private Key: ${data.private_key}, Public Key: ${data.public_key}. Save your private key securely!`;
             message.className = 'success';
             hideForms();
             fetchWallet();
@@ -179,7 +185,7 @@ async function loadWallet(event) {
         });
         const data = await response.json();
         if (response.ok) {
-            message.textContent = `Wallet loaded! Address: ${data.address}`;
+            message.textContent = `Wallet loaded! Address: ${data.address}. Save your private key securely!`;
             message.className = 'success';
             hideForms();
             fetchWallet();
