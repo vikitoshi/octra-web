@@ -1,110 +1,31 @@
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background-color: #f5f7fa;
-    margin: 0;
-    padding: 20px;
-    color: #333;
-}
-
-.container {
-    max-width: 600px;
-    margin: 0 auto;
-    text-align: center;
-}
-
-h1 {
-    font-size: 2rem;
-    color: #1a73e8;
-    margin-bottom: 2rem;
-}
-
-.view, .form {
-    background: white;
-    padding: 2rem;
-    border-radius: 10px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    margin-bottom: 1.5rem;
-    transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-.hidden {
-    display: none;
-    opacity: 0;
-    transform: translateY(20px);
-}
-
-.button-group {
-    display: flex;
-    justify-content: center;
-    gap: 1rem;
-}
-
-button {
-    background-color: #1a73e8;
-    color: white;
-    padding: 0.75rem 1.5rem;
-    border: none;
-    border-radius: 5px;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
-}
-
-button:hover {
-    background-color: #1557b0;
-}
-
-.wallet-info, .send-transaction {
-    text-align: left;
-    margin-bottom: 2rem;
-}
-
-.wallet-info p {
-    margin: 0.5rem 0;
-    font-size: 1rem;
-}
-
-.wallet-info strong {
-    color: #555;
-}
-
-.send-transaction label {
-    display: block;
-    margin: 0.5rem 0 0.2rem;
-    font-weight: 500;
-}
-
-.send-transaction input {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    font-size: 1rem;
-    box-sizing: border-box;
 }
 
 #message {
-    margin-top: 1rem;
-    font-size: 1rem;
+    padding: 1rem;
+    border-radius: 0.5rem;
 }
 
 .success {
-    color: #34c759;
+    background-color: #d4edda;
+    color: #155724;
 }
 
 .error {
-    color: #ff3b30;
+    background-color: #f8d7da;
+    color: #721c24;
 }
 
-@media (max-width: 600px) {
-    .container {
-        padding: 10px;
-    }
-    h1 {
-        font-size: 1.5rem;
-    }
-    button {
-        padding: 0.6rem 1.2rem;
-        font-size: 0.9rem;
-    }
+table {
+    min-width: 100%;
+}
+
+th, td {
+    padding: 0.5rem;
+    font-size: 0.9rem;
+}
+
+tr:nth-child(even) {
+    background-color: #f9fafb;
 }

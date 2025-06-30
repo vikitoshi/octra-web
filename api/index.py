@@ -16,10 +16,8 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Configuration
 μ = 1_000_000
 b58 = re.compile(r"^oct[1-9A-HJ-NP-Za-km-z]{40,48}$")
 priv, addr, rpc = None, None, None
@@ -209,7 +207,6 @@ async def snd(tx):
 
 @app.on_event("startup")
 async def startup_event():
-    # Reset all global variables to ensure no wallet is loaded
     global priv, addr, rpc, sk, pub, cb, cn, lu, lh, h
     priv, addr, rpc, sk, pub = None, None, None, None, None
     cb, cn, lu, lh = None, None, 0, 0
