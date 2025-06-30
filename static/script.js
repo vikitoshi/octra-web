@@ -3,8 +3,15 @@ async function fetchWallet() {
     try {
         const response = await fetch('/api/wallet');
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Failed to fetch wallet');
+            const text = await response.text();
+            let errorDetail;
+            try {
+                const errorData = JSON.parse(text);
+                errorDetail = errorData.detail || 'Failed to fetch wallet';
+            } catch {
+                errorDetail = `Server error: ${text.substring(0, 50)}...`;
+            }
+            throw new Error(errorDetail);
         }
         const data = await response.json();
         document.getElementById('address').textContent = data.address || 'N/A';
@@ -157,18 +164,24 @@ async function generateWallet() {
     const message = document.getElementById('message');
     try {
         const response = await fetch('/api/generate_wallet', { method: 'POST' });
-        const data = await response.json();
-        if (response.ok) {
-            message.textContent = `New wallet generated! Address: ${data.address}, Private Key: ${data.private_key}, Public Key: ${data.public_key}. Save your private key securely!`;
-            message.className = 'success';
-            hideForms();
-            fetchWallet();
-        } else {
-            message.textContent = `Error: ${data.detail}`;
-            message.className = 'error';
+        if (!response.ok) {
+            const text = await response.text();
+            let errorDetail;
+            try {
+                const errorData = JSON.parse(text);
+                errorDetail = errorData.detail || 'Failed to generate wallet';
+            } catch {
+                errorDetail = `Server error: ${text.substring(0, 50)}...`;
+            }
+            throw new Error(errorDetail);
         }
+        const data = await response.json();
+        message.textContent = `New wallet generated! Address: ${data.address}, Private Key: ${data.private_key}, Public Key: ${data.public_key}. Save your private key securely!`;
+        message.className = 'success';
+        hideForms();
+        fetchWallet();
     } catch (error) {
-        message.textContent = `Error: ${error.message}`;
+        message.textContent = `Error generating wallet: ${error.message}`;
         message.className = 'error';
     }
 }
@@ -183,18 +196,24 @@ async function loadWallet(event) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ private_key })
         });
-        const data = await response.json();
-        if (response.ok) {
-            message.textContent = `Wallet loaded! Address: ${data.address}. Save your private key securely!`;
-            message.className = 'success';
-            hideForms();
-            fetchWallet();
-        } else {
-            message.textContent = `Error: ${data.detail}`;
-            message.className = 'error';
+        if (!response.ok) {
+            const text = await response.text();
+            let errorDetail;
+            try {
+                const errorData = JSON.parse(text);
+                errorDetail = errorData.detail || 'Failed to load wallet';
+            } catch {
+                errorDetail = `Server error: ${text.substring(0, 50)}...`;
+            }
+            throw new Error(errorDetail);
         }
+        const data = await response.json();
+        message.textContent = `Wallet loaded! Address: ${data.address}. Save your private key securely!`;
+        message.className = 'success';
+        hideForms();
+        fetchWallet();
     } catch (error) {
-        message.textContent = `Error: ${error.message}`;
+        message.textContent = `Error loading wallet: ${error.message}`;
         message.className = 'error';
     }
 }
